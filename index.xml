@@ -1,13 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<index version="1">
-  <entry version="1.0" name="Track Builder">
-    <author>Victor Veiga</author>
-    <about>Track Builder - Manage Songs and Projects in REAPER</about>
-    <provides>[main] Scripts/track_buider.lua</provides>
-    <changelog>
-      v1.0 - Initial release
-    </changelog>
-    <link>https://raw.githubusercontent.com/victorveiga/reaper-track-builder/main/Scripts/track_buider.lua</link>
-    <link>https://raw.githubusercontent.com/victorveiga/reaper-track-builder/main/Scripts/dkjson.lua</link>
-  </entry>
-</index>
+<repository version="1" name="Track Builder">
+  <index version="1">
+    <entry version="1.0" name="Track Builder">
+      <author>Victor Veiga</author>
+      <about>Track Builder - Manage Songs and Projects in REAPER</about>
+      <provides>
+        [main] Scripts/list_songs.lua
+        Scripts/dkjson.lua
+      </provides>
+      <changelog>
+        v1.0 - Initial release
+      </changelog>
+      <link>https://raw.githubusercontent.com/victorveiga/reaper-track-builder/main/Scripts/list_songs.lua</link>
+      <link>https://raw.githubusercontent.com/victorveiga/reaper-track-builder/main/Scripts/dkjson.lua</link>
+    </entry>
+  </index>
+</repository>
