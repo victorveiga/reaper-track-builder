@@ -4,8 +4,8 @@
     <reapack name="Track Builder" author="Victor Veiga">
       <version name="1.0">
         <changelog><![CDATA[v1.0 - Initial release]]></changelog>
-        <source main="main">https://raw.githubusercontent.com/victorveiga/reaper-track-builder/main/Scripts/list_songs.lua</source>
-        <source>https://raw.githubusercontent.com/victorveiga/reaper-track-builder/main/Scripts/dkjson.lua</source>
+        <source main="main">https://raw.githubusercontent.com/victorveiga/reaper-track-builder/main/Scripts/track_buider.lua</source>
+        <source main="main">https://raw.githubusercontent.com/victorveiga/reaper-track-builder/main/Scripts/dkjson.lua</source>
       </version>
       <metadata>
         <description><![CDATA[Track Builder - Manage Songs and Projects in REAPER]]></description>
