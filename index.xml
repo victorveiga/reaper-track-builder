@@ -1,15 +1,27 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<index version="1" name="Track Builder Scripts">
+<?xml version="1.0" encoding="utf-8"?>
+<index version="1" name="Victor Veiga Scripts" commit="a8f0d4f9ce697a74f92f3fa9f8f6c00cc116bbc9">
   <category name="Scripts">
-    <reapack name="Track Builder" author="Victor Veiga">
-      <version name="1.0">
-        <changelog><![CDATA[v1.0 - Initial release]]></changelog>
-        <source main="main">https://raw.githubusercontent.com/victorveiga/reaper-track-builder/main/Scripts/track_buider.lua</source>
-        <source main="main">https://raw.githubusercontent.com/victorveiga/reaper-track-builder/main/Scripts/dkjson.lua</source>
-      </version>
+    <reapack name="track_builder.lua" type="script" desc="Track Builder - Manage Songs and Projects in REAPER">
       <metadata>
-        <description><![CDATA[Track Builder - Manage Songs and Projects in REAPER]]></description>
+        <description><![CDATA[{\rtf1\ansi\deff0{\fonttbl{\f0 \fswiss Helvetica;}{\f1 \fmodern Courier;}}
+{\colortbl;\red255\green0\blue0;\red0\green0\blue255;}
+\widowctrl\hyphauto
+
+{\pard \ql \f0 \sa180 \li0 \fi0 \b \fs36 Track Builder\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 This script allows you to manage and organize songs inside REAPER.\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 \b \fs28 Features:\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab Browse and select songs from API.\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab Create new projects.\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab Download and open projects directly.\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab Track progress with an interactive UI.\par}
+}
+]]></description>
+        <link rel="website">https://github.com/victorveiga/reaper-track-builder</link>
       </metadata>
+      <version name="1.0" author="Victor Veiga" time="2025-03-11T00:00:00Z">
+        <changelog><![CDATA[Initial release]]></changelog>
+        <source main="main">https://github.com/victorveiga/reaper-track-builder/raw/main/Scripts/VictorVeiga/TrackBuilder/track_builder.lua</source>
+      </version>
     </reapack>
   </category>
 </index>

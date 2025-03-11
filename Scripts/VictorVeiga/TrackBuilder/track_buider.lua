@@ -1,19 +1,20 @@
 -- @description Track Builder - Manage Songs and Projects in REAPER
 -- @version 1.0
 -- @author Victor Veiga
--- @provides [main] Scripts/track_buider.lua
 -- @about
+--   # Track Builder
 --   This script allows you to manage and organize songs inside REAPER.
---   Features:
+--   ## Features:
 --   - Browse and select songs from API.
 --   - Create new projects.
 --   - Download and open projects directly.
 --   - Track progress with an interactive UI.
 -- @changelog
 --   v1.0 - Initial release
-
--- REAPER Script to list songs from the API and allow multiple selection
--- Written in Lua for Reaper compatibility
+-- @provides
+--   [main] Scripts/VictorVeiga/TrackBuilder/track_builder.lua
+-- @link https://github.com/victorveiga/reaper-track-builder
+-- @screenshot https://raw.githubusercontent.com/victorveiga/reaper-track-builder/main/Screenshots/track_builder.png
 
 -- Adjust Lua search path
 local scriptPath = reaper.GetResourcePath() .. "/Scripts"
