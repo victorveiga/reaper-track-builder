@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<index version="1" name="Victor Veiga Scripts" commit="a8f0d4f9ce697a74f92f3fa9f8f6c00cc116bbc9">
+<index version="1" name="Track Builder Scripts" commit="a8f0d4f9ce697a74f92f3fa9f8f6c00cc116bbc9">
   <category name="Scripts">
     <reapack name="track_builder.lua" type="script" desc="Track Builder - Manage Songs and Projects in REAPER">
       <metadata>
@@ -21,6 +21,7 @@
       <version name="1.0" author="Victor Veiga" time="2025-03-11T00:00:00Z">
         <changelog><![CDATA[Initial release]]></changelog>
         <source main="main">https://github.com/victorveiga/reaper-track-builder/raw/main/Scripts/VictorVeiga/TrackBuilder/track_builder.lua</source>
+        <source file="dkjson.lua">https://github.com/victorveiga/reaper-track-builder/raw/main/Scripts/VictorVeiga/TrackBuilder/dkjson.lua</source>
       </version>
     </reapack>
   </category>
