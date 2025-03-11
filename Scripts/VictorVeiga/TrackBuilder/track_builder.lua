@@ -17,7 +17,7 @@
 -- @screenshot https://raw.githubusercontent.com/victorveiga/reaper-track-builder/main/Screenshots/track_builder.png
 
 -- Adjust Lua search path
-local scriptPath = reaper.GetResourcePath() .. "/Scripts/VictorVeiga/TrackBuilder"
+local scriptPath = reaper.GetResourcePath() .. "/Scripts/Track Builder Scripts/Scripts"
 package.path = package.path .. ";" .. scriptPath .. "/?.lua"
 
 -- REAPER Script to list songs from the API with graphical interface
