@@ -138,16 +138,32 @@ function createProject()
     end
     
     local jsonData = json.encode(projectData)
-    local command = string.format("curl -s -X POST -H 'Content-Type: application/json' -d '%s' %s", jsonData, projectCreateUrl)
+    
+    local tempPath = reaper.GetResourcePath() .. "/Temp"
+    local tempFile = tempPath .. "/project_data.json"
+    
+    if osName:match("Win") then
+        os.execute('if not exist "' .. tempPath .. '" mkdir "' .. tempPath .. '"')
+    else
+        os.execute('mkdir -p "' .. tempPath .. '"')
+    end
+    
+    local file = io.open(tempFile, "w")
+    file:write(jsonData)
+    file:close()
+    
+    local command = string.format('curl -s -X POST -H "Content-Type: application/json" -d @"%s" %s', tempFile, projectCreateUrl)
+    
     local handle = io.popen(command)
     local response = handle:read("*a")
     handle:close()
     
     local responseData = json.decode(response)
+
+    os.remove(tempFile)
     
     if responseData and responseData.zip_file then
         local result = r.ShowMessageBox("Project created successfully! Would you like to open it now?", "Success", 4)
-        
         -- Result 6 means "Yes" was clicked, 7 means "No"
         if result == 6 then
             openProject(responseData.id, responseData.zip_file, responseData.static_files)
