@@ -38,9 +38,9 @@ end
 -- Import ReaImGui
 local ctx = reaper.ImGui_CreateContext('Song Selector')
 local json = require "dkjson"
-local songsUrl = "https://7yfzvu0rj5.execute-api.eu-west-3.amazonaws.com/songs"
-local projectsUrl = "https://7yfzvu0rj5.execute-api.eu-west-3.amazonaws.com/projects?user_id=4aaca8b3-a6b7-4100-9080-5b761948682c"
-local projectCreateUrl = "https://7yfzvu0rj5.execute-api.eu-west-3.amazonaws.com/projects"
+local songsUrl = "https://api.track-builder.com/songs"
+local projectsUrl = "https://api.track-builder.com/projects?user_id=4aaca8b3-a6b7-4100-9080-5b761948682c"
+local projectCreateUrl = "https://api.track-builder.com/projects"
 
 -- ImGui Flags
 local ImGui_WindowFlags_None = 0
