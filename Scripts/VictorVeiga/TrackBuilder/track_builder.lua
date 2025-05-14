@@ -97,6 +97,10 @@ local loadedProjects = false
 local currentProjectPage = 1
 local projectsPerPage = 10
 
+-- Add local projects state
+local localProjects = {}
+local loadedLocalProjects = false
+
 local keys = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
 local songKeys = {}  -- Store selected keys for each song
 local needsReorder = false
@@ -131,6 +135,54 @@ function loadToken()
         return token
     end
     return nil
+end
+
+-- Function to scan for local projects
+function scanLocalProjects()
+    localProjects = {}
+    local tempPath = reaper.GetResourcePath() .. "/Temp/"
+    
+    -- Check if Temp directory exists
+    local handle = io.popen('dir "' .. tempPath .. '" /b /ad')
+    if handle then
+        for folder in handle:lines() do
+            -- Check if it's a valid project folder (contains project.rpp)
+            local projectFilePath = tempPath .. folder .. "/project.rpp"
+            local file = io.open(projectFilePath, "r")
+            if file then
+                file:close()
+                table.insert(localProjects, {
+                    id = folder,
+                    path = projectFilePath,
+                    name = folder -- You could parse the project.rpp to get the actual project name
+                })
+            end
+        end
+        handle:close()
+    end
+    
+    -- For Unix-like systems
+    if osName and not osName:match("Win") then
+        handle = io.popen('ls -d ' .. tempPath .. '*/')
+        if handle then
+            for folder in handle:lines() do
+                local folderName = folder:match(".*/(.+)/$")
+                if folderName then
+                    local projectFilePath = tempPath .. folderName .. "/project.rpp"
+                    local file = io.open(projectFilePath, "r")
+                    if file then
+                        file:close()
+                        table.insert(localProjects, {
+                            id = folderName,
+                            path = projectFilePath,
+                            name = folderName
+                        })
+                    end
+                end
+            end
+            handle:close()
+        end
+    end
 end
 
 -- Authentication Functions
@@ -356,9 +408,6 @@ function drawLoginScreen()
     end
 end
 
--- Keep all other existing functions (drawMenu, drawSelectionScreen, etc.) unchanged
--- ... [rest of the original functions remain the same] ...
-
 function reorderSongs()
     if moveFrom > 0 and moveTo > 0 and moveFrom ~= moveTo then
         local temp = table.remove(orderedSongs, moveFrom)
@@ -554,6 +603,11 @@ function openProject(projectId, projectUrl, staticFiles)
     else
         reaper.ShowMessageBox("No project file available.", "Error", 0)
     end
+end
+
+function openLocalProject(projectPath)
+    reaper.Main_openProject(projectPath)
+    windowOpen = false
 end
 
 function drawSelectionScreen()
@@ -763,11 +817,48 @@ function drawMenu()
     r.ImGui_Text(ctx, 'Main Menu')
     r.ImGui_Separator(ctx)
     
-    if r.ImGui_Button(ctx, 'List Songs') then
+    -- Local projects section
+    r.ImGui_Text(ctx, 'Local Projects')
+    r.ImGui_Separator(ctx)
+    
+    if r.ImGui_BeginChild(ctx, 'LocalProjectsList', 0, 200, ImGui_ChildFlags_Border) then
+        if #localProjects == 0 then
+            r.ImGui_Text(ctx, 'No local projects found')
+        else
+            for _, project in ipairs(localProjects) do
+                r.ImGui_Text(ctx, "Project: " .. project.name)
+                r.ImGui_SameLine(ctx)
+                
+                if r.ImGui_Button(ctx, 'Open##local' .. project.id) then
+                    openLocalProject(project.path)
+                end
+                
+                r.ImGui_SameLine(ctx)
+                
+                if r.ImGui_Button(ctx, 'Save##local' .. project.id) then
+                    -- To be implemented in the future
+                    r.ShowMessageBox("Save functionality will be implemented in a future update.", "Coming Soon", 0)
+                end
+            end
+        end
+        r.ImGui_EndChild(ctx)
+    end
+    
+    r.ImGui_Separator(ctx)
+    
+    -- Refresh button for local projects
+    if r.ImGui_Button(ctx, 'Refresh Local Projects') then
+        scanLocalProjects()
+    end
+    
+    r.ImGui_Separator(ctx)
+    
+    -- Menu options
+    if r.ImGui_Button(ctx, 'Create New Project') then
         activeScreen = "songs"
     end
     
-    if r.ImGui_Button(ctx, 'List Projects') then
+    if r.ImGui_Button(ctx, 'List Projects from Cloud') then
         activeScreen = "projects"
     end
     
@@ -832,6 +923,12 @@ function drawUI()
     if authState.isAuthenticated and not loadedProjects then
         projects = getProjects() or {}
         loadedProjects = true
+    end
+    
+    -- Scan for local projects when authenticated
+    if authState.isAuthenticated and not loadedLocalProjects then
+        scanLocalProjects()
+        loadedLocalProjects = true
     end
     
     r.ImGui_SetNextWindowSize(ctx, 600, 600, r.ImGui_Cond_FirstUseEver())
