@@ -558,9 +558,7 @@ function processDownload()
     if current then
         -- If it's project.rpp or file doesn't exist, download it
         if current.path:match("project%.rpp$") or not reaper.file_exists(current.path) then
-            -- Use authenticated request for downloads
-            local headers = string.format('-H "Authorization: Bearer %s"', authState.accessToken)
-            local command = string.format("curl -s %s -o \"%s\" \"%s\"", headers, current.path, current.url)
+            local command = string.format("curl -s -o \"%s\" \"%s\"", current.path, current.url)
             os.execute(command)
         end
         
