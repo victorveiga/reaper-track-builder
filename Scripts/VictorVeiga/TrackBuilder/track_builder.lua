@@ -91,6 +91,12 @@ local downloadState = {
 }
 local osName = reaper.GetOS()
 
+-- Add projects state variables
+local projects = {}
+local loadedProjects = false
+local currentProjectPage = 1
+local projectsPerPage = 10
+
 local keys = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
 local songKeys = {}  -- Store selected keys for each song
 local needsReorder = false
@@ -569,7 +575,9 @@ function drawSelectionScreen()
             local song = filteredSongs[i]
             if song then
                 local isSelected = selectedSongs[song.id] or false
-                local changed, checked = r.ImGui_Checkbox(ctx, song.title, isSelected)
+                -- Updated to include artist name in parentheses
+                local displayName = string.format("%s (%s)", song.title, song.artist or "Unknown")
+                local changed, checked = r.ImGui_Checkbox(ctx, displayName, isSelected)
                 if changed then
                     selectedSongs[song.id] = checked
                 end
@@ -645,7 +653,9 @@ function drawProjectScreen()
             
             local selectableWidth = 280
             local isSelected = false
-            if r.ImGui_Selectable(ctx, string.format("%d. %s", i, song.title), isSelected, 0, selectableWidth, 20) then
+            -- Updated to include artist name in the display
+            local displayText = string.format("%d. %s (%s)", i, song.title, song.artist or "Unknown")
+            if r.ImGui_Selectable(ctx, displayText, isSelected, 0, selectableWidth, 20) then
                 isSelected = true
             end
             
@@ -707,18 +717,42 @@ function drawProjectsList()
     
     r.ImGui_Separator(ctx)
     
+    local startIdx = ((currentProjectPage - 1) * projectsPerPage) + 1
+    local endIdx = math.min(startIdx + projectsPerPage - 1, #projects)
+    
     if r.ImGui_BeginChild(ctx, 'ProjectList', 0, 280, ImGui_ChildFlags_Border) then
-        for _, project in ipairs(projects) do
-            r.ImGui_Text(ctx, "Project: " .. project.name)
-            r.ImGui_SameLine(ctx)
-            if r.ImGui_Button(ctx, "Open##" .. project.id) then
-                openProject(project.id, project.zip_file, project.static_files)
+        for i = startIdx, endIdx do
+            local project = projects[i]
+            if project then
+                r.ImGui_Text(ctx, "Project: " .. project.name)
+                r.ImGui_SameLine(ctx)
+                if r.ImGui_Button(ctx, "Open##" .. project.id) then
+                    openProject(project.id, project.zip_file, project.static_files)
+                end
             end
         end
         r.ImGui_EndChild(ctx)
     end
     
     r.ImGui_Separator(ctx)
+    
+    -- Pagination controls for projects
+    local totalProjectPages = math.ceil(#projects / projectsPerPage)
+    r.ImGui_Text(ctx, string.format("Page %d of %d", currentProjectPage, totalProjectPages))
+    
+    if currentProjectPage > 1 then
+        if r.ImGui_Button(ctx, 'Previous##Projects') then
+            currentProjectPage = currentProjectPage - 1
+        end
+        r.ImGui_SameLine(ctx)
+    end
+    
+    if currentProjectPage < totalProjectPages then
+        if r.ImGui_Button(ctx, 'Next##Projects') then
+            currentProjectPage = currentProjectPage + 1
+        end
+        r.ImGui_SameLine(ctx)
+    end
     
     if r.ImGui_Button(ctx, 'Back') then
         activeScreen = "menu"
