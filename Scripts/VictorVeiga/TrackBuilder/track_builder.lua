@@ -1,5 +1,5 @@
 -- @description Track Builder - Manage Songs and Projects in REAPER
--- @version 1.1
+-- @version 1.2
 -- @author Victor Veiga
 -- @about
 --   # Track Builder
@@ -10,7 +10,9 @@
 --   - Create new projects.
 --   - Download and open projects directly.
 --   - Track progress with an interactive UI.
+--   - Manage local projects with delete functionality
 -- @changelog
+--   v1.2 - Added local project management with save/delete functionality
 --   v1.1 - Added authentication system with login screen
 --   v1.0 - Initial release
 -- @provides
@@ -137,52 +139,94 @@ function loadToken()
     return nil
 end
 
--- Function to scan for local projects
-function scanLocalProjects()
-    localProjects = {}
-    local tempPath = reaper.GetResourcePath() .. "/Temp/"
-    
-    -- Check if Temp directory exists
-    local handle = io.popen('dir "' .. tempPath .. '" /b /ad')
-    if handle then
-        for folder in handle:lines() do
-            -- Check if it's a valid project folder (contains project.rpp)
-            local projectFilePath = tempPath .. folder .. "/project.rpp"
-            local file = io.open(projectFilePath, "r")
-            if file then
-                file:close()
-                table.insert(localProjects, {
-                    id = folder,
-                    path = projectFilePath,
-                    name = folder -- You could parse the project.rpp to get the actual project name
-                })
-            end
-        end
-        handle:close()
+-- Local Projects Management Functions
+function getLocalProjectsFilePath()
+    return reaper.GetResourcePath() .. "/Scripts/Track Builder Scripts/.local_projects"
+end
+
+function saveLocalProjects()
+    local filePath = getLocalProjectsFilePath()
+    local file = io.open(filePath, "w")
+    if file then
+        local data = json.encode(localProjects)
+        file:write(data)
+        file:close()
     end
-    
-    -- For Unix-like systems
-    if osName and not osName:match("Win") then
-        handle = io.popen('ls -d ' .. tempPath .. '*/')
-        if handle then
-            for folder in handle:lines() do
-                local folderName = folder:match(".*/(.+)/$")
-                if folderName then
-                    local projectFilePath = tempPath .. folderName .. "/project.rpp"
-                    local file = io.open(projectFilePath, "r")
-                    if file then
-                        file:close()
-                        table.insert(localProjects, {
-                            id = folderName,
-                            path = projectFilePath,
-                            name = folderName
-                        })
-                    end
-                end
-            end
-            handle:close()
+end
+
+function loadLocalProjects()
+    local filePath = getLocalProjectsFilePath()
+    local file = io.open(filePath, "r")
+    if file then
+        local content = file:read("*a")
+        file:close()
+        local data = json.decode(content)
+        if data then
+            localProjects = data
         end
     end
+end
+
+function addLocalProject(projectId, projectName, projectPath)
+    -- Check if project already exists
+    for _, project in ipairs(localProjects) do
+        if project.id == projectId then
+            return
+        end
+    end
+    
+    -- Add new project
+    table.insert(localProjects, {
+        id = projectId,
+        name = projectName,
+        path = projectPath,
+        downloadedAt = os.date("%Y-%m-%d %H:%M:%S")
+    })
+    
+    saveLocalProjects()
+end
+
+function removeLocalProject(projectId)
+    for i, project in ipairs(localProjects) do
+        if project.id == projectId then
+            table.remove(localProjects, i)
+            saveLocalProjects()
+            return true
+        end
+    end
+    return false
+end
+
+function deleteLocalProject(projectId)
+    -- Find project
+    local projectToDelete = nil
+    for _, project in ipairs(localProjects) do
+        if project.id == projectId then
+            projectToDelete = project
+            break
+        end
+    end
+    
+    if projectToDelete then
+        -- Delete the project folder
+        local tempPath = reaper.GetResourcePath() .. "/Temp/" .. projectId
+        local deleteCommand
+        
+        if osName:match("Win") then
+            deleteCommand = string.format('rd /s /q "%s"', tempPath)
+        else
+            deleteCommand = string.format('rm -rf "%s"', tempPath)
+        end
+        
+        os.execute(deleteCommand)
+        
+        -- Remove from local projects list
+        removeLocalProject(projectId)
+        
+        return true
+    end
+    
+    return false
 end
 
 -- Authentication Functions
@@ -336,7 +380,7 @@ function createProject()
     if responseData and responseData.zip_file then
         local result = r.ShowMessageBox("Project created successfully! Would you like to open it now?", "Success", 4)
         if result == 6 then
-            openProject(responseData.id, responseData.zip_file, responseData.static_files)
+            openProject(responseData.id, responseData.zip_file, responseData.static_files, projectName)
         else
             windowOpen = false
         end
@@ -451,7 +495,7 @@ function initializeSongKeys()
     end
 end
 
-function startDownload(projectId, projectUrl, staticFiles)
+function startDownload(projectId, projectUrl, staticFiles, projectName)
     downloadState = {
         isDownloading = true,
         currentFile = "project.rpp",
@@ -459,6 +503,7 @@ function startDownload(projectId, projectUrl, staticFiles)
         completedFiles = 0,
         currentOperation = "downloading",
         extractionProgress = 0,
+        projectName = projectName,
         projectToOpen = {
             id = projectId,
             url = projectUrl,
@@ -544,6 +589,10 @@ function extractZipFiles()
             reaper.defer(extractZipFiles)
         else
             local projectPath = downloadState.projectToOpen.tempDir .. "/project.rpp"
+            
+            -- Add to local projects
+            addLocalProject(downloadState.projectToOpen.id, downloadState.projectName, projectPath)
+            
             reaper.Main_openProject(projectPath)
             downloadState.isDownloading = false
             windowOpen = false
@@ -574,6 +623,10 @@ function processDownload()
             reaper.defer(extractZipFiles)
         else
             local projectPath = downloadState.projectToOpen.tempDir .. "/project.rpp"
+            
+            -- Add to local projects
+            addLocalProject(downloadState.projectToOpen.id, downloadState.projectName, projectPath)
+            
             reaper.Main_openProject(projectPath)
             downloadState.isDownloading = false
             windowOpen = false
@@ -593,10 +646,10 @@ if not reaper.file_exists then
     end
 end
 
-function openProject(projectId, projectUrl, staticFiles)
+function openProject(projectId, projectUrl, staticFiles, projectName)
     if projectUrl and projectUrl ~= "" then
         activeScreen = "download_progress"
-        startDownload(projectId, projectUrl, staticFiles)
+        startDownload(projectId, projectUrl, staticFiles, projectName or projectId)
         reaper.defer(processDownload)
     else
         reaper.ShowMessageBox("No project file available.", "Error", 0)
@@ -779,7 +832,7 @@ function drawProjectsList()
                 r.ImGui_Text(ctx, "Project: " .. project.name)
                 r.ImGui_SameLine(ctx)
                 if r.ImGui_Button(ctx, "Open##" .. project.id) then
-                    openProject(project.id, project.zip_file, project.static_files)
+                    openProject(project.id, project.zip_file, project.static_files, project.name)
                 end
             end
         end
@@ -824,8 +877,13 @@ function drawMenu()
             r.ImGui_Text(ctx, 'No local projects found')
         else
             for _, project in ipairs(localProjects) do
-                r.ImGui_Text(ctx, "Project: " .. project.name)
-                r.ImGui_SameLine(ctx)
+                r.ImGui_BeginGroup(ctx)
+                r.ImGui_Text(ctx, string.format("Project: %s", project.name))
+                if project.downloadedAt then
+                    r.ImGui_Text(ctx, string.format("Downloaded: %s", project.downloadedAt))
+                end
+                
+                r.ImGui_SameLine(ctx, 350)
                 
                 if r.ImGui_Button(ctx, 'Open##local' .. project.id) then
                     openLocalProject(project.path)
@@ -833,20 +891,27 @@ function drawMenu()
                 
                 r.ImGui_SameLine(ctx)
                 
-                if r.ImGui_Button(ctx, 'Save##local' .. project.id) then
-                    -- To be implemented in the future
-                    r.ShowMessageBox("Save functionality will be implemented in a future update.", "Coming Soon", 0)
+                if r.ImGui_Button(ctx, 'Delete##local' .. project.id) then
+                    local result = r.ShowMessageBox(
+                        string.format("Are you sure you want to delete the project '%s'?\n\nThis will permanently remove the project files from your computer.", 
+                        project.name),
+                        "Confirm Delete",
+                        4  -- MB_YESNO
+                    )
+                    if result == 6 then  -- IDYES
+                        if deleteLocalProject(project.id) then
+                            r.ShowMessageBox("Project deleted successfully.", "Success", 0)
+                        else
+                            r.ShowMessageBox("Failed to delete project.", "Error", 0)
+                        end
+                    end
                 end
+                
+                r.ImGui_EndGroup(ctx)
+                r.ImGui_Separator(ctx)
             end
         end
         r.ImGui_EndChild(ctx)
-    end
-    
-    r.ImGui_Separator(ctx)
-    
-    -- Refresh button for local projects
-    if r.ImGui_Button(ctx, 'Refresh Local Projects') then
-        scanLocalProjects()
     end
     
     r.ImGui_Separator(ctx)
@@ -923,9 +988,9 @@ function drawUI()
         loadedProjects = true
     end
     
-    -- Scan for local projects when authenticated
+    -- Load local projects when authenticated
     if authState.isAuthenticated and not loadedLocalProjects then
-        scanLocalProjects()
+        loadLocalProjects()
         loadedLocalProjects = true
     end
     
