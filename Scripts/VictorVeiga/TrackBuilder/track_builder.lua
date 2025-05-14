@@ -1,15 +1,17 @@
 -- @description Track Builder - Manage Songs and Projects in REAPER
--- @version 1.0
+-- @version 1.1
 -- @author Victor Veiga
 -- @about
 --   # Track Builder
 --   This script allows you to manage and organize songs inside REAPER.
 --   ## Features:
+--   - Login authentication system
 --   - Browse and select songs from API.
 --   - Create new projects.
 --   - Download and open projects directly.
 --   - Track progress with an interactive UI.
 -- @changelog
+--   v1.1 - Added authentication system with login screen
 --   v1.0 - Initial release
 -- @provides
 --   [main] Scripts/VictorVeiga/TrackBuilder/track_builder.lua
@@ -38,9 +40,14 @@ end
 -- Import ReaImGui
 local ctx = reaper.ImGui_CreateContext('Song Selector')
 local json = require "dkjson"
-local songsUrl = "https://api.track-builder.com/songs"
-local projectsUrl = "https://api.track-builder.com/projects?user_id=4aaca8b3-a6b7-4100-9080-5b761948682c"
-local projectCreateUrl = "https://api.track-builder.com/projects"
+
+-- API URLs
+local baseUrl = "https://api.track-builder.com"
+local loginUrl = baseUrl .. "/auth/login"
+local verifyUrl = baseUrl .. "/auth/verify"
+local songsUrl = baseUrl .. "/songs"
+local projectsUrl = baseUrl .. "/projects?user_id=4aaca8b3-a6b7-4100-9080-5b761948682c"
+local projectCreateUrl = baseUrl .. "/projects"
 
 -- ImGui Flags
 local ImGui_WindowFlags_None = 0
@@ -48,6 +55,16 @@ local ImGui_ChildFlags_Border = 1
 local ImGui_DragDropFlags_None = 0
 local ImGui_ComboFlags_None = 0
 local ImGui_SelectableFlags_None = 0
+
+-- Authentication State
+local authState = {
+    isAuthenticated = false,
+    accessToken = "",
+    email = "",
+    verificationCode = "",
+    isWaitingForCode = false,
+    errorMessage = ""
+}
 
 -- State variables
 local songs = {}
@@ -62,7 +79,7 @@ local projectName = ""
 local eventDate = ""
 local orderedSongs = {}
 local userId = "4aaca8b3-a6b7-4100-9080-5b761948682c"
-local activeScreen = "menu"
+local activeScreen = "login"  -- Changed from "menu" to "login"
 local downloadState = {
     isDownloading = false,
     currentFile = "",
@@ -89,11 +106,109 @@ local colors = {
     checkbox = 0x98FB98       -- Pale green
 }
 
-function getSongs()
-    local command = "curl -s " .. songsUrl
+-- Save and Load Token functions
+function saveToken(token)
+    local configPath = reaper.GetResourcePath() .. "/Scripts/Track Builder Scripts/.auth"
+    local file = io.open(configPath, "w")
+    if file then
+        file:write(token)
+        file:close()
+    end
+end
+
+function loadToken()
+    local configPath = reaper.GetResourcePath() .. "/Scripts/Track Builder Scripts/.auth"
+    local file = io.open(configPath, "r")
+    if file then
+        local token = file:read("*a")
+        file:close()
+        return token
+    end
+    return nil
+end
+
+-- Authentication Functions
+function requestVerificationCode()
+    local postData = string.format('{"email":"%s"}', authState.email)
+    local tempFile = reaper.GetResourcePath() .. "/Temp/login_data.json"
+    
+    local file = io.open(tempFile, "w")
+    file:write(postData)
+    file:close()
+    
+    local command = string.format('curl -s -X POST -H "Content-Type: application/json" -d @"%s" %s', tempFile, loginUrl)
     local handle = io.popen(command)
     local response = handle:read("*a")
     handle:close()
+    
+    os.remove(tempFile)
+    
+    local data = json.decode(response)
+    if data and data.success then
+        authState.isWaitingForCode = true
+        authState.errorMessage = ""
+    else
+        authState.errorMessage = data and data.message or "Failed to send verification code"
+    end
+end
+
+function verifyCode()
+    local postData = string.format('{"email":"%s","code":"%s"}', authState.email, authState.verificationCode)
+    local tempFile = reaper.GetResourcePath() .. "/Temp/verify_data.json"
+    
+    local file = io.open(tempFile, "w")
+    file:write(postData)
+    file:close()
+    
+    local command = string.format('curl -s -X POST -H "Content-Type: application/json" -d @"%s" %s', tempFile, verifyUrl)
+    local handle = io.popen(command)
+    local response = handle:read("*a")
+    handle:close()
+    
+    os.remove(tempFile)
+    
+    local data = json.decode(response)
+    if data and data.access_token then
+        authState.accessToken = data.access_token
+        authState.isAuthenticated = true
+        authState.errorMessage = ""
+        saveToken(authState.accessToken)
+        activeScreen = "menu"
+    else
+        authState.errorMessage = data and data.message or "Invalid verification code"
+    end
+end
+
+-- Modified HTTP request functions to include authentication
+function makeAuthenticatedRequest(url, method, data)
+    local headers = string.format('-H "Authorization: Bearer %s" -H "Content-Type: application/json"', authState.accessToken)
+    local command
+    
+    if method == "GET" then
+        command = string.format('curl -s %s "%s"', headers, url)
+    elseif method == "POST" and data then
+        local tempFile = reaper.GetResourcePath() .. "/Temp/request_data.json"
+        local file = io.open(tempFile, "w")
+        file:write(data)
+        file:close()
+        command = string.format('curl -s -X POST %s -d @"%s" "%s"', headers, tempFile, url)
+    else
+        command = string.format('curl -s -X %s %s "%s"', method, headers, url)
+    end
+    
+    local handle = io.popen(command)
+    local response = handle:read("*a")
+    handle:close()
+    
+    if method == "POST" and data then
+        os.remove(reaper.GetResourcePath() .. "/Temp/request_data.json")
+    end
+    
+    return response
+end
+
+function getSongs()
+    local response = makeAuthenticatedRequest(songsUrl, "GET")
     
     if response == "" then
         r.ShowMessageBox("Could not connect to the API. Check your connection.", "Error", 0)
@@ -106,19 +221,38 @@ function getSongs()
         return nil
     end
     
+    -- Check if authentication failed
+    if data.error and data.error:match("Unauthorized") then
+        authState.isAuthenticated = false
+        activeScreen = "login"
+        return nil
+    end
+    
     return data.items
 end
 
-function reorderSongs()
-    if moveFrom > 0 and moveTo > 0 and moveFrom ~= moveTo then
-        local temp = table.remove(orderedSongs, moveFrom)
-        table.insert(orderedSongs, moveTo, temp)
-        
-        -- Reset the move indicators
-        moveFrom = -1
-        moveTo = -1
-        needsReorder = false
+function getProjects()
+    local response = makeAuthenticatedRequest(projectsUrl, "GET")
+    
+    if response == "" then
+        r.ShowMessageBox("Could not connect to the API. Check your connection.", "Error", 0)
+        return nil
     end
+    
+    local data, _, err = json.decode(response)
+    if err then
+        r.ShowMessageBox("Error loading projects: " .. err, "Error", 0)
+        return nil
+    end
+    
+    -- Check if authentication failed
+    if data.error and data.error:match("Unauthorized") then
+        authState.isAuthenticated = false
+        activeScreen = "login"
+        return nil
+    end
+    
+    return data.items
 end
 
 function createProject()
@@ -138,33 +272,11 @@ function createProject()
     end
     
     local jsonData = json.encode(projectData)
-    
-    local tempPath = reaper.GetResourcePath() .. "/Temp"
-    local tempFile = tempPath .. "/project_data.json"
-    
-    if osName:match("Win") then
-        os.execute('if not exist "' .. tempPath .. '" mkdir "' .. tempPath .. '"')
-    else
-        os.execute('mkdir -p "' .. tempPath .. '"')
-    end
-    
-    local file = io.open(tempFile, "w")
-    file:write(jsonData)
-    file:close()
-    
-    local command = string.format('curl -s -X POST -H "Content-Type: application/json" -d @"%s" %s', tempFile, projectCreateUrl)
-    
-    local handle = io.popen(command)
-    local response = handle:read("*a")
-    handle:close()
-    
+    local response = makeAuthenticatedRequest(projectCreateUrl, "POST", jsonData)
     local responseData = json.decode(response)
-
-    os.remove(tempFile)
     
     if responseData and responseData.zip_file then
         local result = r.ShowMessageBox("Project created successfully! Would you like to open it now?", "Success", 4)
-        -- Result 6 means "Yes" was clicked, 7 means "No"
         if result == 6 then
             openProject(responseData.id, responseData.zip_file, responseData.static_files)
         else
@@ -173,6 +285,83 @@ function createProject()
     else
         r.ShowMessageBox("Project created but no file was returned.", "Warning", 0)
         windowOpen = false
+    end
+end
+
+-- Login Screen
+function drawLoginScreen()
+    r.ImGui_Text(ctx, 'Track Builder Login')
+    r.ImGui_Separator(ctx)
+    
+    if authState.errorMessage ~= "" then
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Text(), 0xFF0000FF)
+        r.ImGui_Text(ctx, authState.errorMessage)
+        r.ImGui_PopStyleColor(ctx)
+        r.ImGui_Separator(ctx)
+    end
+    
+    if not authState.isWaitingForCode then
+        r.ImGui_Text(ctx, "Enter your email to receive a verification code:")
+        r.ImGui_Separator(ctx)
+        
+        r.ImGui_SetNextItemWidth(ctx, 300)
+        local changed, newEmail = r.ImGui_InputText(ctx, "Email", authState.email)
+        if changed then
+            authState.email = newEmail
+        end
+        
+        r.ImGui_Separator(ctx)
+        
+        if r.ImGui_Button(ctx, 'Send Verification Code') then
+            if authState.email ~= "" then
+                requestVerificationCode()
+            else
+                authState.errorMessage = "Please enter an email address"
+            end
+        end
+    else
+        r.ImGui_Text(ctx, string.format("Verification code sent to: %s", authState.email))
+        r.ImGui_Separator(ctx)
+        
+        r.ImGui_Text(ctx, "Enter the verification code:")
+        r.ImGui_SetNextItemWidth(ctx, 200)
+        local changed, newCode = r.ImGui_InputText(ctx, "Code", authState.verificationCode)
+        if changed then
+            authState.verificationCode = newCode
+        end
+        
+        r.ImGui_Separator(ctx)
+        
+        if r.ImGui_Button(ctx, 'Verify Code') then
+            if authState.verificationCode ~= "" then
+                verifyCode()
+            else
+                authState.errorMessage = "Please enter the verification code"
+            end
+        end
+        
+        r.ImGui_SameLine(ctx)
+        
+        if r.ImGui_Button(ctx, 'Back') then
+            authState.isWaitingForCode = false
+            authState.verificationCode = ""
+            authState.errorMessage = ""
+        end
+    end
+end
+
+-- Keep all other existing functions (drawMenu, drawSelectionScreen, etc.) unchanged
+-- ... [rest of the original functions remain the same] ...
+
+function reorderSongs()
+    if moveFrom > 0 and moveTo > 0 and moveFrom ~= moveTo then
+        local temp = table.remove(orderedSongs, moveFrom)
+        table.insert(orderedSongs, moveTo, temp)
+        
+        -- Reset the move indicators
+        moveFrom = -1
+        moveTo = -1
+        needsReorder = false
     end
 end
 
@@ -205,36 +394,6 @@ function initializeSongKeys()
             songKeys[song.id] = song.key or "C"
         end
     end
-end
-
-function reorderSongs()
-    if moveFrom > 0 and moveTo > 0 and moveFrom ~= moveTo then
-        local temp = table.remove(orderedSongs, moveFrom)
-        table.insert(orderedSongs, moveTo, temp)
-        moveFrom = -1
-        moveTo = -1
-        needsReorder = false
-    end
-end
-
-function getProjects()
-    local command = "curl -s " .. projectsUrl
-    local handle = io.popen(command)
-    local response = handle:read("*a")
-    handle:close()
-    
-    if response == "" then
-        r.ShowMessageBox("Could not connect to the API. Check your connection.", "Error", 0)
-        return nil
-    end
-    
-    local data, _, err = json.decode(response)
-    if err then
-        r.ShowMessageBox("Error loading projects: " .. err, "Error", 0)
-        return nil
-    end
-    
-    return data.items
 end
 
 function startDownload(projectId, projectUrl, staticFiles)
@@ -344,7 +503,9 @@ function processDownload()
     if current then
         -- If it's project.rpp or file doesn't exist, download it
         if current.path:match("project%.rpp$") or not reaper.file_exists(current.path) then
-            local command = string.format("curl -s -o \"%s\" \"%s\"", current.path, current.url)
+            -- Use authenticated request for downloads
+            local headers = string.format('-H "Authorization: Bearer %s"', authState.accessToken)
+            local command = string.format("curl -s %s -o \"%s\" \"%s\"", headers, current.path, current.url)
             os.execute(command)
         end
         
@@ -379,7 +540,6 @@ if not reaper.file_exists then
     end
 end
 
-
 function openProject(projectId, projectUrl, staticFiles)
     if projectUrl and projectUrl ~= "" then
         activeScreen = "download_progress"
@@ -389,7 +549,6 @@ function openProject(projectId, projectUrl, staticFiles)
         reaper.ShowMessageBox("No project file available.", "Error", 0)
     end
 end
-
 
 function drawSelectionScreen()
     r.ImGui_Text(ctx, 'Select Songs')
@@ -457,7 +616,6 @@ function drawSelectionScreen()
         activeScreen = "menu"
     end
 end
-
 
 function drawProjectScreen()
     if #orderedSongs > 0 and not next(songKeys) then
@@ -579,6 +737,19 @@ function drawMenu()
         activeScreen = "projects"
     end
     
+    if r.ImGui_Button(ctx, 'Logout') then
+        authState.isAuthenticated = false
+        authState.accessToken = ""
+        authState.email = ""
+        authState.verificationCode = ""
+        authState.isWaitingForCode = false
+        authState.errorMessage = ""
+        -- Remove saved token
+        local configPath = reaper.GetResourcePath() .. "/Scripts/Track Builder Scripts/.auth"
+        os.remove(configPath)
+        activeScreen = "login"
+    end
+    
     if r.ImGui_Button(ctx, 'Exit') then
         windowOpen = false
     end
@@ -605,28 +776,39 @@ function drawDownloadProgressScreen()
     end
 end
 
-
 function drawUI()
     if not windowOpen then return end
     
-    if not loadedSongs then
+    -- Try to load saved token on first run
+    if activeScreen == "login" and not authState.isAuthenticated then
+        local savedToken = loadToken()
+        if savedToken and savedToken ~= "" then
+            authState.accessToken = savedToken
+            authState.isAuthenticated = true
+            activeScreen = "menu"
+        end
+    end
+    
+    if authState.isAuthenticated and not loadedSongs then
         songs = getSongs() or {}
         filteredSongs = songs
         loadedSongs = true
     end
     
-    if not loadedProjects then
+    if authState.isAuthenticated and not loadedProjects then
         projects = getProjects() or {}
         loadedProjects = true
     end
     
     r.ImGui_SetNextWindowSize(ctx, 600, 600, r.ImGui_Cond_FirstUseEver())
     
-    local visible, open = r.ImGui_Begin(ctx, 'Project Manager', true, ImGui_WindowFlags_None)
+    local visible, open = r.ImGui_Begin(ctx, 'Track Builder', true, ImGui_WindowFlags_None)
     windowOpen = open
     
     if visible then
-        if activeScreen == "menu" then
+        if activeScreen == "login" then
+            drawLoginScreen()
+        elseif activeScreen == "menu" then
             drawMenu()
         elseif activeScreen == "songs" then
             drawSelectionScreen()
