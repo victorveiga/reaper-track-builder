@@ -139,6 +139,56 @@ function loadToken()
     return nil
 end
 
+-- Function to handle logout and reset states
+function performLogout(showMessage)
+    authState.isAuthenticated = false
+    authState.accessToken = ""
+    authState.email = ""
+    authState.verificationCode = ""
+    authState.isWaitingForCode = false
+    authState.errorMessage = ""
+    
+    -- Reset data states
+    songs = {}
+    filteredSongs = {}
+    projects = {}
+    loadedSongs = false
+    loadedProjects = false
+    loadedLocalProjects = false
+    
+    -- Remove saved token
+    local configPath = reaper.GetResourcePath() .. "/Scripts/Track Builder Scripts/.auth"
+    os.remove(configPath)
+    
+    -- Show message if requested
+    if showMessage then
+        r.ShowMessageBox("Session expired. Please login again.", "Authentication Required", 0)
+    end
+    
+    activeScreen = "login"
+end
+
+-- Function to reload data after successful login
+function reloadDataAfterLogin()
+    -- Reset states to force reload
+    loadedSongs = false
+    loadedProjects = false
+    loadedLocalProjects = false
+    
+    -- Load songs
+    songs = getSongs() or {}
+    filteredSongs = songs
+    loadedSongs = true
+    
+    -- Load projects
+    projects = getProjects() or {}
+    loadedProjects = true
+    
+    -- Load local projects
+    loadLocalProjects()
+    loadedLocalProjects = true
+end
+
 -- Local Projects Management Functions
 function getLocalProjectsFilePath()
     return reaper.GetResourcePath() .. "/Scripts/Track Builder Scripts/.local_projects"
@@ -275,10 +325,33 @@ function verifyCode()
         authState.isAuthenticated = true
         authState.errorMessage = ""
         saveToken(authState.accessToken)
+        
+        -- Reload data after successful login
+        reloadDataAfterLogin()
+        
         activeScreen = "menu"
     else
         authState.errorMessage = data and data.message or "Invalid verification code"
     end
+end
+
+-- Function to check if response indicates authentication error
+function isAuthenticationError(response)
+    if not response or response == "" then
+        return false
+    end
+    
+    local data = json.decode(response)
+    if data then
+        -- Check for 403 Forbidden or Unauthorized errors
+        if (data.error and (data.error:match("Unauthorized") or data.error:match("Forbidden"))) or
+           (data.status and (data.status == 403 or data.status == 401)) or
+           (data.message and (data.message:match("Unauthorized") or data.message:match("Forbidden"))) then
+            return true
+        end
+    end
+    
+    return false
 end
 
 -- Modified HTTP request functions to include authentication
@@ -317,16 +390,15 @@ function getSongs()
         return nil
     end
     
-    local data, _, err = json.decode(response)
-    if err then
-        r.ShowMessageBox("Error loading songs: " .. err, "Error", 0)
+    -- Check for authentication errors
+    if isAuthenticationError(response) then
+        r.defer(function() performLogout(true) end)
         return nil
     end
     
-    -- Check if authentication failed
-    if data.error and data.error:match("Unauthorized") then
-        authState.isAuthenticated = false
-        activeScreen = "login"
+    local data, _, err = json.decode(response)
+    if err then
+        r.ShowMessageBox("Error loading songs: " .. err, "Error", 0)
         return nil
     end
     
@@ -341,16 +413,15 @@ function getProjects()
         return nil
     end
     
-    local data, _, err = json.decode(response)
-    if err then
-        r.ShowMessageBox("Error loading projects: " .. err, "Error", 0)
+    -- Check for authentication errors
+    if isAuthenticationError(response) then
+        r.defer(function() performLogout(true) end)
         return nil
     end
     
-    -- Check if authentication failed
-    if data.error and data.error:match("Unauthorized") then
-        authState.isAuthenticated = false
-        activeScreen = "login"
+    local data, _, err = json.decode(response)
+    if err then
+        r.ShowMessageBox("Error loading projects: " .. err, "Error", 0)
         return nil
     end
     
@@ -375,6 +446,13 @@ function createProject()
     
     local jsonData = json.encode(projectData)
     local response = makeAuthenticatedRequest(projectCreateUrl, "POST", jsonData)
+    
+    -- Check for authentication errors
+    if isAuthenticationError(response) then
+        r.defer(function() performLogout(true) end)
+        return
+    end
+    
     local responseData = json.decode(response)
     
     if responseData and responseData.zip_file then
@@ -926,16 +1004,7 @@ function drawMenu()
     end
     
     if r.ImGui_Button(ctx, 'Logout') then
-        authState.isAuthenticated = false
-        authState.accessToken = ""
-        authState.email = ""
-        authState.verificationCode = ""
-        authState.isWaitingForCode = false
-        authState.errorMessage = ""
-        -- Remove saved token
-        local configPath = reaper.GetResourcePath() .. "/Scripts/Track Builder Scripts/.auth"
-        os.remove(configPath)
-        activeScreen = "login"
+        performLogout(false)
     end
     
     if r.ImGui_Button(ctx, 'Exit') then
@@ -973,25 +1042,30 @@ function drawUI()
         if savedToken and savedToken ~= "" then
             authState.accessToken = savedToken
             authState.isAuthenticated = true
+            -- Load data after token validation
+            reloadDataAfterLogin()
             activeScreen = "menu"
         end
     end
     
-    if authState.isAuthenticated and not loadedSongs then
-        songs = getSongs() or {}
-        filteredSongs = songs
-        loadedSongs = true
-    end
-    
-    if authState.isAuthenticated and not loadedProjects then
-        projects = getProjects() or {}
-        loadedProjects = true
-    end
-    
-    -- Load local projects when authenticated
-    if authState.isAuthenticated and not loadedLocalProjects then
-        loadLocalProjects()
-        loadedLocalProjects = true
+    -- Force refresh if we need to load data but are authenticated
+    if authState.isAuthenticated and activeScreen ~= "login" and activeScreen ~= "download_progress" then
+        if not loadedSongs then
+            songs = getSongs() or {}
+            filteredSongs = songs
+            loadedSongs = true
+        end
+        
+        if not loadedProjects then
+            projects = getProjects() or {}
+            loadedProjects = true
+        end
+        
+        -- Load local projects when authenticated
+        if not loadedLocalProjects then
+            loadLocalProjects()
+            loadedLocalProjects = true
+        end
     end
     
     r.ImGui_SetNextWindowSize(ctx, 600, 600, r.ImGui_Cond_FirstUseEver())
