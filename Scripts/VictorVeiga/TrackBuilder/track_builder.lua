@@ -1,5 +1,5 @@
 -- @description Track Builder - Manage Songs and Projects in REAPER
--- @version 1.2
+-- @version 1.3
 -- @author Victor Veiga
 -- @about
 --   # Track Builder
@@ -11,7 +11,9 @@
 --   - Download and open projects directly.
 --   - Track progress with an interactive UI.
 --   - Manage local projects with delete functionality
+--   - Save local projects to cloud with RPP file upload
 -- @changelog
+--   v1.3 - Added Save to Cloud functionality for local projects
 --   v1.2 - Added local project management with save/delete functionality
 --   v1.1 - Added authentication system with login screen
 --   v1.0 - Initial release
@@ -102,6 +104,15 @@ local projectsPerPage = 10
 -- Add local projects state
 local localProjects = {}
 local loadedLocalProjects = false
+
+-- Add upload state variables
+local uploadState = {
+    isUploading = false,
+    currentProject = nil,
+    progress = 0,
+    message = "",
+    errorMessage = ""
+}
 
 local keys = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
 local songKeys = {}  -- Store selected keys for each song
@@ -367,6 +378,12 @@ function makeAuthenticatedRequest(url, method, data)
         file:write(data)
         file:close()
         command = string.format('curl -s -X POST %s -d @"%s" "%s"', headers, tempFile, url)
+    elseif method == "PUT" and data then
+        local tempFile = reaper.GetResourcePath() .. "/Temp/request_data.json"
+        local file = io.open(tempFile, "w")
+        file:write(data)
+        file:close()
+        command = string.format('curl -s -X PUT %s -d @"%s" "%s"', headers, tempFile, url)
     else
         command = string.format('curl -s -X %s %s "%s"', method, headers, url)
     end
@@ -375,11 +392,126 @@ function makeAuthenticatedRequest(url, method, data)
     local response = handle:read("*a")
     handle:close()
     
-    if method == "POST" and data then
+    if (method == "POST" or method == "PUT") and data then
         os.remove(reaper.GetResourcePath() .. "/Temp/request_data.json")
     end
     
     return response
+end
+
+-- Base64 encoding function
+function encodeBase64(data)
+    local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    local result = {}
+    
+    for i = 1, #data, 3 do
+        local a, b, c = string.byte(data, i), string.byte(data, i+1), string.byte(data, i+2)
+        local bitmap = a * 0x10000 + (b or 0) * 0x100 + (c or 0)
+        
+        result[#result+1] = b64chars:sub(((bitmap >> 18) & 63) + 1, ((bitmap >> 18) & 63) + 1)
+        result[#result+1] = b64chars:sub(((bitmap >> 12) & 63) + 1, ((bitmap >> 12) & 63) + 1)
+        result[#result+1] = b and b64chars:sub(((bitmap >> 6) & 63) + 1, ((bitmap >> 6) & 63) + 1) or '='
+        result[#result+1] = c and b64chars:sub((bitmap & 63) + 1, (bitmap & 63) + 1) or '='
+    end
+    
+    return table.concat(result)
+end
+
+-- Function to read RPP file and encode to base64
+function readRppFileAsBase64(filePath)
+    local file = io.open(filePath, "rb")
+    if not file then
+        return nil, "Could not open file: " .. filePath
+    end
+    
+    local content = file:read("*a")
+    file:close()
+    
+    if not content or content == "" then
+        return nil, "File is empty or could not be read"
+    end
+    
+    local base64Content = encodeBase64(content)
+    return base64Content, nil
+end
+
+-- Function to save project to cloud
+function saveProjectToCloud(localProject)
+    uploadState.isUploading = true
+    uploadState.currentProject = localProject
+    uploadState.progress = 0
+    uploadState.message = "Reading RPP file..."
+    uploadState.errorMessage = ""
+    
+    -- Read and encode RPP file
+    local base64Content, readError = readRppFileAsBase64(localProject.path)
+    if not base64Content then
+        uploadState.isUploading = false
+        uploadState.errorMessage = "Error reading RPP file: " .. (readError or "Unknown error")
+        return
+    end
+    
+    uploadState.progress = 0.3
+    uploadState.message = "Preparing upload data..."
+    
+    -- Get project songs from the cloud project if it exists
+    local cloudProject = nil
+    for _, project in ipairs(projects) do
+        if project.id == localProject.id then
+            cloudProject = project
+            break
+        end
+    end
+    
+    -- Prepare the data for upload
+    local uploadData = {
+        id = localProject.id,
+        name = localProject.name,
+        songs = cloudProject and cloudProject.songs or {},
+        rpp_file_base64 = base64Content
+    }
+    
+    uploadState.progress = 0.5
+    uploadState.message = "Uploading to cloud..."
+    
+    -- Make the PUT request
+    local jsonData = json.encode(uploadData)
+    local response = makeAuthenticatedRequest(projectCreateUrl, "PUT", jsonData)
+    
+    uploadState.progress = 0.8
+    uploadState.message = "Processing response..."
+    
+    -- Check for authentication errors
+    if isAuthenticationError(response) then
+        uploadState.isUploading = false
+        uploadState.errorMessage = "Authentication failed. Please login again."
+        r.defer(function() performLogout(true) end)
+        return
+    end
+    
+    local responseData = json.decode(response)
+    
+    if responseData and responseData.message and responseData.message:match("successfully") then
+        uploadState.progress = 1.0
+        uploadState.message = "Upload completed successfully!"
+        
+        -- Update local project info if needed
+        if responseData.rpp_file_url then
+            -- Could store the cloud URL for reference
+        end
+        
+        -- Auto-close upload dialog after success
+        r.defer(function()
+            uploadState.isUploading = false
+            uploadState.currentProject = nil
+            -- Reload projects to reflect changes
+            loadedProjects = false
+        end)
+        
+    else
+        uploadState.isUploading = false
+        uploadState.errorMessage = responseData and responseData.message or "Upload failed. Please try again."
+    end
 end
 
 function getSongs()
@@ -530,6 +662,38 @@ function drawLoginScreen()
     end
 end
 
+-- Upload Progress Screen
+function drawUploadProgressScreen()
+    r.ImGui_Text(ctx, 'Uploading Project to Cloud')
+    r.ImGui_Separator(ctx)
+    
+    if uploadState.currentProject then
+        r.ImGui_Text(ctx, "Project: " .. uploadState.currentProject.name)
+        r.ImGui_Separator(ctx)
+    end
+    
+    r.ImGui_ProgressBar(ctx, uploadState.progress, -1, 0, string.format("%.0f%%", uploadState.progress * 100))
+    r.ImGui_Text(ctx, uploadState.message)
+    
+    if uploadState.errorMessage ~= "" then
+        r.ImGui_Separator(ctx)
+        r.ImGui_PushStyleColor(ctx, r.ImGui_Col_Text(), 0xFF0000FF)
+        r.ImGui_Text(ctx, "Error: " .. uploadState.errorMessage)
+        r.ImGui_PopStyleColor(ctx)
+    end
+    
+    r.ImGui_Separator(ctx)
+    
+    if not uploadState.isUploading or uploadState.errorMessage ~= "" then
+        if r.ImGui_Button(ctx, 'Close') then
+            uploadState.isUploading = false
+            uploadState.currentProject = nil
+            uploadState.errorMessage = ""
+            activeScreen = "menu"
+        end
+    end
+end
+
 function reorderSongs()
     if moveFrom > 0 and moveTo > 0 and moveFrom ~= moveTo then
         local temp = table.remove(orderedSongs, moveFrom)
@@ -676,6 +840,67 @@ function extractZipFiles()
             windowOpen = false
         end
     end
+end
+
+function processDownload()
+    if not downloadState.isDownloading then return end
+    
+    local current = downloadState.projectToOpen.downloadQueue[1]
+    if current then
+        -- If it's project.rpp or file doesn't exist, download it
+        if current.path:match("project%.rpp$") or not reaper.file_exists(current.path) then
+            local command = string.format("curl -s -o \"%s\" \"%s\"", current.path, current.url)
+            os.execute(command)
+        end
+        
+        downloadState.completedFiles = downloadState.completedFiles + 1
+        if downloadState.projectToOpen.downloadQueue[2] then
+            downloadState.currentFile = downloadState.projectToOpen.downloadQueue[2].url:match(".*/(.-)$") or ""
+        end
+        table.remove(downloadState.projectToOpen.downloadQueue, 1)
+        
+        reaper.defer(processDownload)
+    else
+        if #downloadState.projectToOpen.extractQueue > 0 then
+            reaper.defer(extractZipFiles)
+        else
+            local projectPath = downloadState.projectToOpen.tempDir .. "/project.rpp"
+            
+            -- Add to local projects
+            addLocalProject(downloadState.projectToOpen.id, downloadState.projectName, projectPath)
+            
+            reaper.Main_openProject(projectPath)
+            downloadState.isDownloading = false
+            windowOpen = false
+        end
+    end
+end
+
+-- Add helper function to check if file exists
+if not reaper.file_exists then
+    function reaper.file_exists(path)
+        local f = io.open(path, "r")
+        if f then
+            f:close()
+            return true
+        end
+        return false
+    end
+end
+
+function openProject(projectId, projectUrl, staticFiles, projectName)
+    if projectUrl and projectUrl ~= "" then
+        activeScreen = "download_progress"
+        startDownload(projectId, projectUrl, staticFiles, projectName or projectId)
+        reaper.defer(processDownload)
+    else
+        reaper.ShowMessageBox("No project file available.", "Error", 0)
+    end
+end
+
+function openLocalProject(projectPath)
+    reaper.Main_openProject(projectPath)
+    windowOpen = false
 end
 
 function processDownload()
@@ -961,10 +1186,17 @@ function drawMenu()
                     r.ImGui_Text(ctx, string.format("Downloaded: %s", project.downloadedAt))
                 end
                 
-                r.ImGui_SameLine(ctx, 350)
+                r.ImGui_SameLine(ctx, 280)
                 
                 if r.ImGui_Button(ctx, 'Open##local' .. project.id) then
                     openLocalProject(project.path)
+                end
+                
+                r.ImGui_SameLine(ctx)
+                
+                if r.ImGui_Button(ctx, 'Save to Cloud##local' .. project.id) then
+                    activeScreen = "upload_progress"
+                    saveProjectToCloud(project)
                 end
                 
                 r.ImGui_SameLine(ctx)
@@ -1049,7 +1281,7 @@ function drawUI()
     end
     
     -- Force refresh if we need to load data but are authenticated
-    if authState.isAuthenticated and activeScreen ~= "login" and activeScreen ~= "download_progress" then
+    if authState.isAuthenticated and activeScreen ~= "login" and activeScreen ~= "download_progress" and activeScreen ~= "upload_progress" then
         if not loadedSongs then
             songs = getSongs() or {}
             filteredSongs = songs
@@ -1068,7 +1300,7 @@ function drawUI()
         end
     end
     
-    r.ImGui_SetNextWindowSize(ctx, 600, 600, r.ImGui_Cond_FirstUseEver())
+    r.ImGui_SetNextWindowSize(ctx, 700, 600, r.ImGui_Cond_FirstUseEver())
     
     local visible, open = r.ImGui_Begin(ctx, 'Track Builder', true, ImGui_WindowFlags_None)
     windowOpen = open
@@ -1086,6 +1318,8 @@ function drawUI()
             drawProjectScreen()
         elseif activeScreen == "download_progress" then
             drawDownloadProgressScreen()
+        elseif activeScreen == "upload_progress" then
+            drawUploadProgressScreen()
         end
         r.ImGui_End(ctx)
     end
